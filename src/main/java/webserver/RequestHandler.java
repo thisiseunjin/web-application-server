@@ -1,4 +1,4 @@
-package webserver;
+ package webserver;
 
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
@@ -37,49 +37,12 @@ public class RequestHandler extends Thread {
 		try (InputStream in = connection.getInputStream(); OutputStream out = connection.getOutputStream()) {
 			// TODO 사용자 요청에 대한 처리는 이 곳에 구현하면 된다.
 
-			// 1단계
-			InputStreamReader isr = new InputStreamReader(in);
-
-			BufferedReader br = new BufferedReader(isr);
-
-			String line = br.readLine();
-
-			// line이 null 값인 경우에 대한 예외 처리를 해야 한다. 아니면 무한 루프에 빠진다.
-			if (line == null) {
-				return;
-			}
-
-			// 2단계
-			String[] lines = line.split(" "); // Http header를 나눈다.
-
-			String url = lines[1]; // 요청 url
-
-			String[] root = url.split("/");
-
-			// Http Header를 분석한다.
-			int contentLen = 0;
-			boolean logined = false;
-			while (!"".equals(line)) {
-
-				line = br.readLine();
-
-				if (line.contains("Content-Length")) {
-					contentLen = contentLength(line);
-				} else if (line.contains("Cookie")) {
-					logined = isLogin(line);
-				}
-
-			}
-
-			if (url.equals("/user/create")) { // 회원가입
+			HttpRequest request = new HttpRequest(in);
+			String path = getDefaultPath(request.getPath());
+			
+			if (path.equals("/user/create")) { // 회원가입
 				// byte형식으로 받아온 pathVariable을 String 타입으로 반환해서 변수에 저장한다.
-				String pathVariable = IOUtils.readData(br, contentLen);
-				
-				// pathVariable을 parsing한다.
-				Map<String, String> params = HttpRequestUtils.parseQueryString(pathVariable);
-				
-				User user = new User(params.get("userId"), params.get("password"), params.get("name"),
-						params.get("email"));
+				User user = new User(request.getParameter("userId"), request.getParameter("password"), request.getParameter("name"), request.getParameter("email"));
 
 				DataBase.addUser(user);
 
@@ -87,26 +50,24 @@ public class RequestHandler extends Thread {
 
 				response302Header(dos, "/index.html");
 
-			} else if (url.equals("/user/login")) { // 로그인
-				String pathVariable = IOUtils.readData(br, contentLen);
+			} else if (path.equals("/user/login")) { // 로그인
+			
 
-				Map<String, String> params = HttpRequestUtils.parseQueryString(pathVariable);
-
-				User user = DataBase.findUserById(params.get("userId"));
+				User user = DataBase.findUserById(request.getParameter("userId"));
 
 				if (user == null) {// DB에 회원의 정보가 없는 경우
 					responseResource(out, "/user/login_failed.html");
 					return;
 				}
 
-				if (user.getPassword().equals(params.get("password"))) { // DB에 저장한 비밀번호와 사용자가 입력한 비밀번호가 동일한 경우
+				if (user.getPassword().equals(request.getParameter("password"))) { // DB에 저장한 비밀번호와 사용자가 입력한 비밀번호가 동일한 경우
 					DataOutputStream dos = new DataOutputStream(out);
 					response302LoginSuccessHeader(dos); // Header 요청 라인의 상태 코드를 302로 변경하고 Location을 추가한다.
 				} else {
 					responseResource(out, "/user/login_failed.html"); // 로그인에 실패한 경우
 				}
-			} else if (url.equals("/user/list")) { // 사용자의 목록을 조회한다.
-				if (!logined) {
+			} else if (path.equals("/user/list")) { // 사용자의 목록을 조회한다.
+				if (!isLogin(request.getHeader("Cookie"))) {
 					responseResource(out, "/user/login.html");
 					return;
 				}
@@ -126,13 +87,13 @@ public class RequestHandler extends Thread {
 				DataOutputStream dos = new DataOutputStream(out);
 				response200Header(dos, body.length);
 				responseBody(dos, body);
-			} else if (url.endsWith(".css")) {
+			} else if (path.endsWith(".css")) {
 				DataOutputStream dos = new DataOutputStream(out);
-				byte[] body = Files.readAllBytes(new File("./webapp" + url).toPath());
+				byte[] body = Files.readAllBytes(new File("./webapp" + path).toPath());
 				response200CssHeader(dos, body.length);
 				responseBody(dos, body);
 			} else {
-				responseResource(out, url);
+				responseResource(out, path);
 			}
 
 		} catch (IOException e) {
@@ -147,9 +108,11 @@ public class RequestHandler extends Thread {
 
 	// ● isLogin : Cookie의 상태를 반환하는 메소드
 	// Ex) line의 형태 → Cookie: logined=true
-	public boolean isLogin(String line) {
-		String state = line.split(": ")[1].split("=")[1];
-		return Boolean.parseBoolean(state);
+	public boolean isLogin(String cookieValue) {
+		Map<String, String> cookies = HttpRequestUtils.parseCookies(cookieValue);
+		String value = cookies.get("logined");
+		if(value==null) return false;
+		return Boolean.parseBoolean(value);
 	}
 
 	// ● response302Header : Header의 상태 코드를 302으로 하고 url의 경로로 redirect 하는 메소드
@@ -214,5 +177,10 @@ public class RequestHandler extends Thread {
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
+	}
+	
+	private String getDefaultPath(String path) {
+		if(path.equals("/")) return "/index.html";
+		return path;
 	}
 }
